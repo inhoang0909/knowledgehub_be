@@ -1,0 +1,275 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+  binaryTargets = ["native", "linux-musl", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+model Department {
+  id                 Int                           @id @default(autoincrement())
+  code               String                        @unique
+  name               String
+  createdAt          DateTime                      @default(now()) @map("created_at")
+  description        String?
+  managerId          Int?                          @map("manager_id")
+  manager            User?                         @relation("DepartmentManager", fields: [managerId], references: [id])
+  datasetPermissions DatasetDepartmentPermission[]
+  users              User[]                        @relation("DepartmentMembers")
+  categories         Category[]
+  @@map("departments")
+}
+
+model User {
+  id                 Int             @id @default(autoincrement())
+  externalId         String          @unique @map("external_id")
+  username           String?
+  email              String?
+  name               String?
+  role               UserRole        @default(MEMBER)
+  departmentCode     String?         @map("department_code")
+  lastLoginAt        DateTime?       @map("last_login_at")
+  createdAt          DateTime        @default(now()) @map("created_at")
+  isActive           Boolean         @default(true) @map("is_active")
+  datasetMemberships DatasetMember[]
+  createdDatasets    Dataset[]       @relation("UserCreatedDatasets")
+  ownedDatasets      Dataset[]       @relation("UserOwnedDatasets")
+  createdSegments    Segment[]       @relation("UserCreatedSegments")
+  updatedSegments    Segment[]       @relation("UserUpdatedSegments")
+  department         Department?     @relation("DepartmentMembers", fields: [departmentCode], references: [code])
+  managedDepartments Department[]     @relation("DepartmentManager")
+  conversations      Conversation[]   @relation("UserConversations")
+  annotations        Annotation[]     @relation("UserAnnotations")
+
+  @@map("users")
+}
+
+model Dataset {
+  id                    Int                           @id @default(autoincrement())
+  difyDatasetId         String                        @unique @map("dify_dataset_id")
+  name                  String
+  schemaConfig          Json?                          @map("schema_config")
+  createdAt             DateTime                      @default(now()) @map("created_at")
+  description           String?
+  isDeleted             Boolean                       @default(false) @map("is_deleted")
+  createdById           Int                           @map("created_by")
+  ownerId               Int                           @map("owner_id")
+  categoryId            Int?                          @map("category_id")
+  category              Category?                     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  departmentPermissions DatasetDepartmentPermission[]
+  members               DatasetMember[]
+  createdBy             User                          @relation("UserCreatedDatasets", fields: [createdById], references: [id])
+  owner                 User                          @relation("UserOwnedDatasets", fields: [ownerId], references: [id])
+  documents             Document[]
+  // chatbots relation removed — chatbots are now discovered on-the-fly via Dify DB
+  annotations           Annotation[]     // Các bản sửa lỗi được nhét vào Dataset này
+  @@map("datasets")
+}
+
+model DatasetMember {
+  id        Int         @id @default(autoincrement())
+  datasetId Int         @map("dataset_id")
+  userId    Int         @map("user_id")
+  role      DatasetRole @default(VIEWER)
+  dataset   Dataset     @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, userId])
+  @@map("dataset_members")
+}
+
+model DatasetDepartmentPermission {
+  id           Int         @id @default(autoincrement())
+  datasetId    Int         @map("dataset_id")
+  departmentId Int         @map("department_id")
+  role         DatasetRole @default(VIEWER)
+  dataset      Dataset     @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  department   Department  @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, departmentId])
+  @@map("dataset_department_permissions")
+}
+
+model Document {
+  id             Int       @id @default(autoincrement())
+  fileName        String          @map("file_name")
+  fileUrl         String          @map("file_url") // Đường dẫn lưu file (vd: /uploads/abc.pdf hoặc S3 url)
+  fileType        String?         @map("file_type") // Đuôi file: pdf, docx, xlsx...
+  fileSize        Int?            @map("file_size") // Dung lượng (bytes) để validate
+  
+  // --- 2. TRẠNG THÁI & ĐIỀU HƯỚNG BACKGROUND JOB ---
+  status          DocumentStatus  @default(UPLOADED)
+  knowledgeType   KnowledgeType   @default(DOCUMENT_SEARCH) @map("knowledge_type")
+  errorMessage    String?         @db.Text @map("error_message") // Lưu lỗi nếu OCR hoặc Dify sập để báo cho User
+  difyDocumentId String?   @map("dify_document_id")
+  parsedContent   String?         @db.Text @map("parsed_content") // Lưu Raw Markdown sau khi OCR bóc ra
+  rawData        Json?     @map("raw_data")
+  datasetId      Int       @map("dataset_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  dataset        Dataset   @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  segments       Segment[]
+
+  @@map("documents")
+}
+
+model Segment {
+  id            Int      @id @default(autoincrement())
+  documentId    Int      @map("document_id")
+  difySegmentId String   @map("dify_segment_id")
+  rawData       Json     @map("raw_data")
+  isDirty       Boolean  @default(false) @map("is_dirty")
+  createdById   Int      @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  updatedById   Int?     @map("updated_by")
+  createdBy     User     @relation("UserCreatedSegments", fields: [createdById], references: [id])
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  updatedBy     User?    @relation("UserUpdatedSegments", fields: [updatedById], references: [id])
+
+  @@map("segments")
+}
+// File Processing System Model
+model ProcessedFile {
+  id            String   @id @default(uuid())
+  originalName  String   @map("original_name")
+  filePath      String   @map("file_path")          // Path to original file in ./uploads/
+  fileType      String   @map("file_type")
+  fileSize      Int      @map("file_size")
+  status        String                              // PENDING, PROCESSING, COMPLETED, FAILED
+  parsedContent String?  @db.Text @map("parsed_content")  // Markdown content from VLM (stored in DB)
+  metadata      String?  @db.Text                   // JSON metadata (no binary data)
+  userId        String   @map("user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  processedAt   DateTime? @map("processed_at")
+
+  @@map("processed_files")
+}
+
+model Category {
+  id             Int          @id @default(autoincrement())
+  name           String       // vd: "Khối Văn Phòng", "Khối Nhà Máy"
+  description    String?
+  departmentId   Int          @map("department_id")
+
+  // ĐÂY LÀ CHÌA KHÓA: Tự tham chiếu để tạo thư mục con (Sub-category) vô hạn cấp
+  parentId       Int?         @map("parent_id")
+  parent         Category?    @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  subCategories  Category[]   @relation("CategoryHierarchy")
+  path           String?
+  embedding      Unsupported("vector(768)")?
+
+  createdAt      DateTime     @default(now()) @map("created_at")
+  department     Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  datasets       Dataset[]    // Dataset nằm ở tầng lá cuối cùng
+
+  @@map("categories")
+}
+enum UserRole {
+  SUPER_ADMIN
+  MEMBER
+  DEPT_MANAGER
+}
+
+enum DatasetRole {
+  VIEWER
+  EDITOR
+  MANAGER
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PARSING
+  PARSED
+  PROCESSING_AI // Đang gửi dữ liệu 
+  COMPLETED
+  FAILED
+}
+
+enum KnowledgeType {
+  QNA
+  DOCUMENT_SEARCH
+  SUMMARY
+  KNOWLEDGE_GRAPH
+}
+
+// Chatbot and ChatbotDataset tables removed.
+// Chatbots are now discovered on-the-fly via cross-DB query to Dify (app_dataset_joins).
+// Conversations store the difyAppId directly as a plain string column.
+
+// ==========================================
+// 💬 2. CONVERSATION & MESSAGE (LỊCH SỬ CHAT)
+// ==========================================
+model Conversation {
+  id                 Int       @id @default(autoincrement())
+  difyConversationId String    @unique @map("dify_conversation_id")
+
+  // Store the Dify App UUID directly — no local chatbots table needed.
+  difyAppId          String    @map("dify_app_id")
+  userId             Int?      @map("user_id")    // User nào đang chat?
+
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  user               User?     @relation("UserConversations", fields: [userId], references: [id])
+  messages           Message[]
+
+  @@index([difyAppId])
+  @@map("conversations")
+}
+
+model Message {
+  id             Int              @id @default(autoincrement())
+  difyMessageId  String           @unique @map("dify_message_id")
+  conversationId Int              @map("conversation_id")
+  
+  query          String           @db.Text
+  answer         String           @db.Text
+  
+  feedback       MessageFeedback  @default(NONE) // LIKE, DISLIKE, NONE
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  annotation     Annotation?      
+
+  @@map("messages")
+}
+
+// ==========================================
+// 🎯 3. ANNOTATION (TINH CHỈNH/SỬA LỖI)
+// ==========================================
+model Annotation {
+  id             Int              @id @default(autoincrement())
+  messageId      Int              @unique @map("message_id") 
+  
+  // 🔥 QUAN TRỌNG: Lưu lại xem Admin đã chọn ném bản sửa lỗi này vào Dataset nào
+  targetDatasetId Int             @map("target_dataset_id") 
+  
+  expectedAnswer String           @db.Text @map("expected_answer") 
+  status         AnnotationStatus @default(DRAFT)
+  
+  createdById    Int              @map("created_by")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  message        Message          @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdBy      User             @relation("UserAnnotations", fields: [createdById], references: [id])
+  targetDataset  Dataset          @relation(fields: [targetDatasetId], references: [id]) // Nhớ thêm `annotations Annotation[]` vào model Dataset
+
+  @@map("annotations")
+}
+
+enum MessageFeedback {
+  LIKE
+  DISLIKE
+  NONE
+}
+
+enum AnnotationStatus {
+  DRAFT
+  PUBLISHED
+  DELETED
+}

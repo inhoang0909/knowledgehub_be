@@ -1,0 +1,81 @@
+services:
+  # Backend API service
+  api:
+    build: .
+    container_name: dify_local_api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-9000}:${PORT:-9000}"
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-9000}
+      HOST: ${HOST:-0.0.0.0}
+      DATABASE_URL: ${DATABASE_URL}
+      DIFY_API_URL: ${DIFY_API_URL}
+      DIFY_API_KEY: ${DIFY_API_KEY}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      OCR_API_URL: ${OCR_API_URL}
+      OCR_TEMPLATE_ID: ${OCR_TEMPLATE_ID:-imageocr}
+      OCR_TEMPERATURE: ${OCR_TEMPERATURE:-0}
+      OCR_TIMEOUT_MS: ${OCR_TIMEOUT_MS:-180000}
+      OCR_MAX_ATTEMPTS: ${OCR_MAX_ATTEMPTS:-2}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      EXTERNAL_USER_SEARCH_URL: ${EXTERNAL_USER_SEARCH_URL}
+      LOGIN_URL: ${LOGIN_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      DIFY_DB_HOST: ${DIFY_DB_HOST}
+      DIFY_DB_PORT: ${DIFY_DB_PORT:-5432}
+      DIFY_DB_USER: ${DIFY_DB_USER:-postgres}
+      DIFY_DB_PASSWORD: ${DIFY_DB_PASSWORD}
+      DIFY_DB_NAME: ${DIFY_DB_NAME:-dify}
+      GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
+    depends_on:
+      - db
+      - redis
+    networks:
+      - app-network
+
+  # Use pgvector for vector search capabilities
+  db:
+    image: pgvector/pgvector:pg15
+    container_name: dify_local_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - app-network
+
+  redis:
+    image: redis:alpine
+    container_name: redis-dev
+    ports:
+      - "6379:6379"
+    restart: always
+    networks:
+      - app-network
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: gotenberg-dev
+    command:
+      - "gotenberg"
+      - "--api-port=3000"
+    ports: 
+      - "3003:3000"
+    restart: always
+    networks:
+      - app-network
+volumes:
+  pgdata:
+
+networks:
+  app-network:
+    driver: bridge

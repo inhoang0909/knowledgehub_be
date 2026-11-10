@@ -1,0 +1,45 @@
+# Compiled output
+/dist
+/build
+
+# Dependencies
+/node_modules
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Testing & Coverage
+/coverage
+/.nyc_output
+
+# File uploads and temporary files
+/uploads/*
+!/uploads/temp/.gitkeep
+
+# Docker compose local overrides
+docker-compose.override.yml
+
+package-lock.json
